@@ -7,7 +7,6 @@ import { createBenchmarkClients } from "@/lib/benchmark-clients";
 import { runAsyncTransaction, runSyncTransaction } from "@/lib/benchmark-runner";
 import { BenchmarkResult } from "@/types/benchmark";
 import { ResultCard } from "./ResultCard";
-import { ComparisonCard } from "./ComparisonCard";
 
 export function TransactionBenchmark() {
   const [isRunning, setIsRunning] = useState(false);
@@ -62,10 +61,6 @@ export function TransactionBenchmark() {
     setIsRunning(false);
   };
 
-  const showComparison = 
-    asyncResult?.status === "success" && 
-    syncResult?.status === "success";
-
   return (
     <div className="w-full max-w-6xl mx-auto px-4 py-8">
       <div className="flex flex-col items-center gap-8">
@@ -81,10 +76,6 @@ export function TransactionBenchmark() {
           <ResultCard result={asyncResult} isRunning={isRunning} type="async" />
           <ResultCard result={syncResult} isRunning={isRunning} type="sync" />
         </div>
-
-        {showComparison && asyncResult && syncResult && (
-          <ComparisonCard asyncResult={asyncResult} syncResult={syncResult} />
-        )}
       </div>
     </div>
   );
