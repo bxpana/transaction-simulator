@@ -12,6 +12,7 @@ interface PartialResult {
 interface ResultCardProps {
   result: BenchmarkResult | null;
   isRunning: boolean;
+  isPreparing?: boolean;
   type: "async" | "sync";
   partialResult?: PartialResult | null;
   elapsedTime?: number;
@@ -86,7 +87,7 @@ const MOCK_SYNC_CALLS: RPCCallLog[] = [
   { method: "eth_sendRawTransactionSync", startTime: 0, endTime: 470, duration: 470 },
 ];
 
-export function ResultCard({ result, isRunning, type, partialResult, elapsedTime = 0 }: ResultCardProps) {
+export function ResultCard({ result, isRunning, isPreparing = false, type, partialResult, elapsedTime = 0 }: ResultCardProps) {
   const isAsync = type === "async";
   const title = isAsync ? "Async Transaction" : "Sync Transaction (EIP-7966)";
   const subtitle = isAsync 
@@ -97,7 +98,7 @@ export function ResultCard({ result, isRunning, type, partialResult, elapsedTime
   const isLiveRunning = isRunning && partialResult;
   const displayCalls = result?.rpcCalls || partialResult?.rpcCalls || (isAsync ? MOCK_ASYNC_CALLS : MOCK_SYNC_CALLS);
   const totalDuration = displayCalls.reduce((sum, call) => sum + call.duration, 0);
-  const showMockData = !result && !isRunning && !partialResult;
+  const showMockData = !result && !isRunning && !partialResult && !isPreparing;
   const displayElapsedTime = isLiveRunning ? elapsedTime : result?.duration;
   
   // Use animated counter for the total duration and RPC time
@@ -113,6 +114,12 @@ export function ResultCard({ result, isRunning, type, partialResult, elapsedTime
           <h3 className="text-xl font-semibold text-white mb-2">{title}</h3>
           <p className="text-sm text-zinc-400 font-mono">{subtitle}</p>
         </div>
+        {isPreparing && (
+          <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-500/20 text-blue-400 flex items-center gap-1">
+            <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+            Preparing...
+          </span>
+        )}
         {result && (
           <span
             className={`px-2 py-1 rounded text-xs font-semibold ${
@@ -132,8 +139,36 @@ export function ResultCard({ result, isRunning, type, partialResult, elapsedTime
         )}
       </div>
 
+      {/* Show preparing state */}
+      {isPreparing && (
+        <>
+          <div className="mb-3">
+            <p className="text-sm text-zinc-400 mb-1">Total Duration</p>
+            <p className="text-2xl font-bold font-mono text-blue-400">
+              <span className="animate-pulse">--</span>
+            </p>
+          </div>
+
+          <div className="flex-1 flex flex-col mb-3">
+            <p className="text-sm text-zinc-400 mb-2">RPC Call Breakdown</p>
+            <div className="flex items-center justify-center py-8">
+              <p className="text-sm text-blue-400 font-medium animate-pulse">
+                Setting up wallets and fetching parameters...
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-3 pb-3 border-t border-zinc-700">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-zinc-400">Total RPC Time</span>
+              <span className="font-mono font-semibold text-blue-400 animate-pulse">--</span>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Show mock data, real results, or live running data */}
-      {(result || showMockData || isLiveRunning) && (
+      {!isPreparing && (result || showMockData || isLiveRunning) && (
         <>
           {(showMockData || result?.status === "success" || isLiveRunning) ? (
             <>

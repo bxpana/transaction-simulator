@@ -28,7 +28,6 @@ export function createInstrumentedTransport(
         // If chainId is prefetched and this is an eth_chainId call, return cached value
         // Don't log it since no actual RPC call is made
         if (request.method === "eth_chainId" && prefetchChainId && cachedChainId) {
-          console.log("✨ Returning cached chainId (no RPC call):", cachedChainId);
           // Return in hex format as viem expects
           return `0x${cachedChainId.toString(16)}` as any;
         }

@@ -20,6 +20,7 @@ interface PartialResult {
 
 export function TransactionBenchmark() {
   const [isRunning, setIsRunning] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [asyncResult, setAsyncResult] = useState<BenchmarkResult | null>(null);
   const [syncResult, setSyncResult] = useState<BenchmarkResult | null>(null);
   const [asyncPartial, setAsyncPartial] = useState<PartialResult | null>(null);
@@ -36,7 +37,8 @@ export function TransactionBenchmark() {
   const syncTimerRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   const runBenchmark = async () => {
-    setIsRunning(true);
+    setIsPreparing(true);
+    setIsRunning(false);
     setAsyncResult(null);
     setSyncResult(null);
     setAsyncElapsed(0);
@@ -49,39 +51,11 @@ export function TransactionBenchmark() {
     // Create separate RPC call logs for each transaction type
     const asyncRPCCalls: RPCCallLog[] = [];
     const syncRPCCalls: RPCCallLog[] = [];
-    
-    const asyncStartTime = Date.now();
-    const syncStartTime = Date.now();
-
-    // Initialize partial results
-    setAsyncPartial({
-      type: "async",
-      startTime: asyncStartTime,
-      rpcCalls: [],
-      isComplete: false,
-    });
-    setSyncPartial({
-      type: "sync",
-      startTime: syncStartTime,
-      rpcCalls: [],
-      isComplete: false,
-    });
-
-    // Start timers for elapsed time
-    asyncTimerRef.current = setInterval(() => {
-      setAsyncElapsed(Date.now() - asyncStartTime);
-    }, 50);
-    
-    syncTimerRef.current = setInterval(() => {
-      setSyncElapsed(Date.now() - syncStartTime);
-    }, 50);
 
     // Pre-fetch gas parameters if enabled (before creating transaction clients)
     // Use a temporary client that doesn't log to transaction RPC arrays
     let prefetchedGas = null;
     if (prefetchOptions.gasParams) {
-      console.log("⛽ Pre-fetching gas parameters...");
-      
       // Create a temporary client just for pre-fetching (doesn't log to RPC arrays)
       const prefetchClients = createBenchmarkClients(
         asyncAccount, 
@@ -106,7 +80,6 @@ export function TransactionBenchmark() {
         gas: gasEstimate,
       };
       
-      console.log("✅ Gas parameters pre-fetched:", prefetchedGas);
     }
 
     // Create clients for async transaction with its own account
@@ -172,8 +145,37 @@ export function TransactionBenchmark() {
       ]);
     }
 
+    // NOW start the timers and partial results - right before transactions begin
+    // This ensures the animated timer matches the actual transaction duration
+    const asyncStartTime = Date.now();
+    const syncStartTime = Date.now();
+
+    setIsPreparing(false);
+    setIsRunning(true);
+
+    setAsyncPartial({
+      type: "async",
+      startTime: asyncStartTime,
+      rpcCalls: [],
+      isComplete: false,
+    });
+    setSyncPartial({
+      type: "sync",
+      startTime: syncStartTime,
+      rpcCalls: [],
+      isComplete: false,
+    });
+
+    asyncTimerRef.current = setInterval(() => {
+      setAsyncElapsed(Date.now() - asyncStartTime);
+    }, 50);
+    
+    syncTimerRef.current = setInterval(() => {
+      setSyncElapsed(Date.now() - syncStartTime);
+    }, 50);
+
     // Run both transactions in parallel with no dependencies
-    // Track completion time for each individually and stop their timers
+    // The timers are already running and will match the actual transaction duration
     const asyncPromise = runAsyncTransaction(
       { ...asyncClients, account: asyncAccount },
       asyncNonce,
@@ -181,14 +183,12 @@ export function TransactionBenchmark() {
       prefetchOptions,
       prefetchedGas
     ).then(res => {
-      const duration = Date.now() - asyncStartTime;
-      const finalResult = { ...res, duration };
-      // Stop async timer and set result immediately when this transaction completes
+      // Stop async timer and set the final accurate duration from the transaction
       if (asyncTimerRef.current) clearInterval(asyncTimerRef.current);
-      setAsyncElapsed(duration);
+      setAsyncElapsed(res.duration);
       setAsyncPartial(null);
-      setAsyncResult(finalResult); // Set result immediately!
-      return finalResult;
+      setAsyncResult(res);
+      return res;
     });
 
     const syncPromise = runSyncTransaction(
@@ -198,14 +198,12 @@ export function TransactionBenchmark() {
       prefetchOptions,
       prefetchedGas
     ).then(res => {
-      const duration = Date.now() - syncStartTime;
-      const finalResult = { ...res, duration };
-      // Stop sync timer and set result immediately when this transaction completes
+      // Stop sync timer and set the final accurate duration from the transaction
       if (syncTimerRef.current) clearInterval(syncTimerRef.current);
-      setSyncElapsed(duration);
+      setSyncElapsed(res.duration);
       setSyncPartial(null);
-      setSyncResult(finalResult); // Set result immediately!
-      return finalResult;
+      setSyncResult(res);
+      return res;
     });
 
     // Wait for both to complete
@@ -227,14 +225,16 @@ export function TransactionBenchmark() {
         <div className="grid md:grid-cols-2 gap-6 w-full">
           <ResultCard 
             result={asyncResult} 
-            isRunning={isRunning} 
+            isRunning={isRunning}
+            isPreparing={isPreparing}
             type="async"
             partialResult={asyncPartial}
             elapsedTime={asyncElapsed}
           />
           <ResultCard 
             result={syncResult} 
-            isRunning={isRunning} 
+            isRunning={isRunning}
+            isPreparing={isPreparing}
             type="sync"
             partialResult={syncPartial}
             elapsedTime={syncElapsed}
@@ -243,7 +243,7 @@ export function TransactionBenchmark() {
 
         <ShimmerButton
           onClick={runBenchmark}
-          disabled={isRunning}
+          disabled={isRunning || isPreparing}
           shimmerColor="#10b981"
           shimmerSize="0.1em"
           shimmerDuration="2s"
@@ -251,7 +251,7 @@ export function TransactionBenchmark() {
           background="linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)"
           className="w-full px-8 py-3 text-base font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_40px_rgba(16,185,129,0.3)] hover:shadow-[0_0_60px_rgba(16,185,129,0.5)] transition-shadow"
         >
-          {isRunning ? "Running Benchmark..." : "Run Benchmark"}
+          {isPreparing ? "Preparing..." : isRunning ? "Running Benchmark..." : "Run Benchmark"}
         </ShimmerButton>
       </div>
     </div>

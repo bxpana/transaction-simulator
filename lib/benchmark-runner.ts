@@ -30,8 +30,10 @@ export async function runAsyncTransaction(
   prefetchedGas: PrefetchedGas | null = null
 ): Promise<BenchmarkResult> {
   const startTime = Date.now();
+  console.log("⏱️  [ASYNC] Transaction started at:", startTime);
   
   try {
+    const paramsStartTime = Date.now();
     const txParams: any = {
       to: zeroAddress,
       value: BigInt(0),
@@ -45,32 +47,53 @@ export async function runAsyncTransaction(
 
     // Add pre-fetched gas parameters if enabled
     if (prefetchOptions.gasParams && prefetchedGas) {
-      console.log("🔧 Async: Using pre-fetched gas params:", prefetchedGas);
       txParams.maxFeePerGas = prefetchedGas.maxFeePerGas;
       txParams.maxPriorityFeePerGas = prefetchedGas.maxPriorityFeePerGas;
       txParams.gas = prefetchedGas.gas;
     }
+    const paramsEndTime = Date.now();
+    console.log("⏱️  [ASYNC] Params prepared in:", paramsEndTime - paramsStartTime, "ms");
 
     let hash: string;
     
     // When all params are prefetched, skip prepareTransactionRequest to avoid re-estimation
     if (prefetchOptions.nonce && prefetchOptions.gasParams && prefetchOptions.chainId && prefetchedGas) {
-      console.log("🔧 Async: Skipping prepareTransactionRequest, signing directly");
+      const requestStartTime = Date.now();
       // Add account and chain directly since we're skipping prepare
       const requestToSign: any = {
         ...txParams,
         from: clients.account.address,
         chainId: abstractTestnet.id,
       };
+      const requestEndTime = Date.now();
+      console.log("⏱️  [ASYNC] Request prepared in:", requestEndTime - requestStartTime, "ms");
+      
+      const signStartTime = Date.now();
       const serializedTransaction = await clients.walletClient.signTransaction(requestToSign);
+      const signEndTime = Date.now();
+      console.log("⏱️  [ASYNC] Transaction signed in:", signEndTime - signStartTime, "ms");
+      
+      const sendStartTime = Date.now();
       hash = await clients.publicClient.sendRawTransaction({ serializedTransaction });
+      const sendEndTime = Date.now();
+      console.log("⏱️  [ASYNC] sendRawTransaction completed in:", sendEndTime - sendStartTime, "ms");
+      console.log("⏱️  [ASYNC] Transaction hash:", hash);
     } else {
       // Use normal flow when some params aren't prefetched
+      const sendTxStartTime = Date.now();
       hash = await clients.walletClient.sendTransaction(txParams);
+      const sendTxEndTime = Date.now();
+      console.log("⏱️  [ASYNC] sendTransaction completed in:", sendTxEndTime - sendTxStartTime, "ms");
+      console.log("⏱️  [ASYNC] Transaction hash:", hash);
     }
 
+    const waitStartTime = Date.now();
     await clients.publicClient.waitForTransactionReceipt({ hash });
+    const waitEndTime = Date.now();
+    console.log("⏱️  [ASYNC] waitForTransactionReceipt completed in:", waitEndTime - waitStartTime, "ms");
+    
     const endTime = Date.now();
+    console.log("⏱️  [ASYNC] Total transaction time:", endTime - startTime, "ms");
 
     return {
       type: "async",
@@ -104,8 +127,10 @@ export async function runSyncTransaction(
   prefetchedGas: PrefetchedGas | null = null
 ): Promise<BenchmarkResult> {
   const startTime = Date.now();
+  console.log("⏱️  [SYNC] Transaction started at:", startTime);
   
   try {
+    const paramsStartTime = Date.now();
     const txParams: any = {
       to: zeroAddress,
       value: BigInt(0),
@@ -123,18 +148,31 @@ export async function runSyncTransaction(
       txParams.maxPriorityFeePerGas = prefetchedGas.maxPriorityFeePerGas;
       txParams.gas = prefetchedGas.gas;
     }
+    const paramsEndTime = Date.now();
+    console.log("⏱️  [SYNC] Params prepared in:", paramsEndTime - paramsStartTime, "ms");
 
     // Note: chainId is controlled at transport level (intercepted when prefetch is enabled)
 
+    const prepareStartTime = Date.now();
     const request = await clients.walletClient.prepareTransactionRequest(txParams);
+    const prepareEndTime = Date.now();
+    console.log("⏱️  [SYNC] prepareTransactionRequest completed in:", prepareEndTime - prepareStartTime, "ms");
 
+    const signStartTime = Date.now();
     const serializedTransaction = await clients.walletClient.signTransaction(request);
+    const signEndTime = Date.now();
+    console.log("⏱️  [SYNC] Transaction signed in:", signEndTime - signStartTime, "ms");
     
+    const sendStartTime = Date.now();
     const receipt = await clients.publicClient.sendRawTransactionSync({
       serializedTransaction,
     });
+    const sendEndTime = Date.now();
+    console.log("⏱️  [SYNC] sendRawTransactionSync completed in:", sendEndTime - sendStartTime, "ms");
+    console.log("⏱️  [SYNC] Transaction hash:", receipt.transactionHash);
 
     const endTime = Date.now();
+    console.log("⏱️  [SYNC] Total transaction time:", endTime - startTime, "ms");
 
     return {
       type: "sync",
