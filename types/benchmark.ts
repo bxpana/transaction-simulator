@@ -8,5 +8,4 @@ export interface BenchmarkResult {
   status: "success" | "error";
   error?: string;
   rpcCalls: RPCCallLog[];
-  syncMode: boolean;
 }

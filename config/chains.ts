@@ -8,7 +8,11 @@ import {
 } from "viem/chains";
 import * as allViemChains from "viem/chains";
 
-// Override megaethTestnet with custom RPC URL and chain ID
+/**
+ * MegaETH Testnet with updated RPC URL and chain ID
+ * The viem default is outdated - this uses the current testnet configuration
+ * See: https://docs.megaeth.com for latest network details
+ */
 const megaethTestnet = defineChain({
   ...baseMegaethTestnet,
   id: 6343,
@@ -115,7 +119,7 @@ export function getAllViemChains(): Chain[] {
  * Find a chain by ID from viem's definitions or our featured chains
  */
 export function getChainById(chainId: number): Chain | undefined {
-  // Check featured chains first (includes our overrides like megaETH)
+  // Check featured chains first (includes custom overrides like megaethTestnet)
   const featured = FEATURED_CHAINS.find((c) => c.id === chainId);
   if (featured) return featured;
 

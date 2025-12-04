@@ -32,7 +32,7 @@ const chains = allChains as [Chain, ...Chain[]];
 // Configure wagmi with RainbowKit defaults
 const config = getDefaultConfig({
   appName: "Transaction Latency Simulator",
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo",
+  projectId: "txsim.com",
   chains,
   ssr: true,
 });

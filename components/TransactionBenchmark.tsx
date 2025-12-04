@@ -9,9 +9,9 @@ import { runConnectedWalletTransaction, ConnectedWalletContext } from "@/lib/ben
 import { BenchmarkResult } from "@/types/benchmark";
 import { PartialResult } from "@/types/partial-result";
 import { ResultCard } from "./ResultCard";
-import { SettingsControlPanel } from "./PrefetchControlPanel";
+import { SettingsControlPanel } from "./SettingsControlPanel";
 import { APP_CONFIG } from "@/constants/app-config";
-import { DEFAULT_CHAIN, getChainUI } from "@/config/chains";
+import { DEFAULT_CHAIN } from "@/config/chains";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 export function TransactionBenchmark() {
@@ -30,8 +30,6 @@ export function TransactionBenchmark() {
   const { data: walletClient } = useWalletClient();
   const { switchChainAsync } = useSwitchChain();
 
-  const ui = getChainUI(selectedChain.id);
-
   // Clear results when switching chains, and switch wallet chain if connected
   const handleChainChange = async (chain: Chain) => {
     setSelectedChain(chain);
@@ -43,9 +41,8 @@ export function TransactionBenchmark() {
     if (isConnected) {
       try {
         await switchChainAsync({ chainId: chain.id });
-      } catch (error) {
+      } catch {
         // User might reject the switch, that's okay
-        console.log("Chain switch cancelled or failed:", error);
       }
     }
   };
@@ -108,7 +105,6 @@ export function TransactionBenchmark() {
           startTime,
           rpcCalls: [],
           isComplete: false,
-          syncMode: false,
         });
 
         timerRef.current = setInterval(() => {
@@ -126,8 +122,7 @@ export function TransactionBenchmark() {
     setIsWaitingForWallet(false);
   };
 
-  // Determine button state
-  const buttonDisabled = isRunning || isWaitingForWallet || !canRunTransaction;
+  // Determine button text
   const buttonText = isWaitingForWallet
     ? "Confirm in Wallet..."
     : isRunning
@@ -160,10 +155,7 @@ export function TransactionBenchmark() {
         <ResultCard
           result={result}
           isRunning={isRunning}
-          isPreparing={false}
           isWaitingForWallet={isWaitingForWallet}
-          isConnectedWallet={true}
-          syncMode={false}
           partialResult={partialResult}
           elapsedTime={elapsedTime}
           chain={selectedChain}

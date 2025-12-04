@@ -50,18 +50,22 @@
       transform: translate(calc(100cqw - 100%), 0);
     }
   }
+
   @keyframes spin-around {
     0% {
       transform: translateZ(0) rotate(0);
     }
+
     15%,
     35% {
       transform: translateZ(0) rotate(90deg);
     }
+
     65%,
     85% {
       transform: translateZ(0) rotate(270deg);
     }
+
     100% {
       transform: translateZ(0) rotate(360deg);
     }
@@ -282,6 +286,7 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   100% {
     opacity: 1;
     transform: translateY(0);
@@ -309,15 +314,4 @@
   shape-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-/* Border beam spin animation - kept for backwards compatibility */
-@keyframes border-beam-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.animate-border-beam-spin {
-  animation: border-beam-spin var(--duration) linear infinite;
 }

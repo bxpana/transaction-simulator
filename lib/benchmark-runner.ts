@@ -4,14 +4,6 @@ import { RPCCallLog } from "@/lib/instrumented-transport";
 import { BenchmarkPublicClient } from "./benchmark-clients";
 
 /**
- * Configuration for transaction parameters (for connected wallet mode)
- */
-export interface TransactionOptions {
-  /** Whether to use sync mode (eth_sendRawTransactionSync) - currently not supported with connected wallets */
-  syncMode: boolean;
-}
-
-/**
  * Connected wallet transaction context
  */
 export interface ConnectedWalletContext {
@@ -43,48 +35,26 @@ export async function runConnectedWalletTransaction(
   rpcCalls: RPCCallLog[],
   onTransactionSubmitted?: OnTransactionSubmitted
 ): Promise<BenchmarkResult> {
-  const modeLabel = "CONNECTED";
-  const chainName = chain.name;
-
   try {
-    // Build transaction params - send to self instead of zero address
-    // This avoids MetaMask's "burn address" warning
-    const txParams: any = {
-      to: context.address, // Self-transfer
+    // Build transaction params - self-transfer to avoid wallet warnings
+    const txParams = {
+      to: context.address,
       value: BigInt(0),
       account: context.address,
       chain,
     };
 
     // Send transaction via connected wallet
-    // The wallet will prompt the user to confirm, sign, AND send
-    // We DON'T start timing until AFTER this returns (tx is in mempool)
-    console.log(`⏱️  [${chainName}] [${modeLabel}] Waiting for user to confirm in wallet...`);
+    // Timer starts AFTER this returns (user confirmed + sent to mempool)
     const hash = await context.walletClient.sendTransaction(txParams);
-
-    // NOW start the timer - transaction has been sent to the network
     const startTime = Date.now();
-    console.log(`⏱️  [${chainName}] [${modeLabel}] Transaction sent! Timer started at:`, startTime);
-    console.log(`⏱️  [${chainName}] [${modeLabel}] Transaction hash:`, hash);
 
     // Notify that transaction was submitted (for UI to start timer)
-    if (onTransactionSubmitted) {
-      onTransactionSubmitted(startTime);
-    }
+    onTransactionSubmitted?.(startTime);
 
-    // Wait for receipt through our instrumented client
-    // This captures eth_getTransactionReceipt timing (the confirmation latency)
-    const waitStartTime = Date.now();
+    // Wait for confirmation via instrumented client (captures RPC timing)
     await context.publicClient.waitForTransactionReceipt({ hash });
-    const waitEndTime = Date.now();
-    console.log(
-      `⏱️  [${chainName}] [${modeLabel}] waitForTransactionReceipt completed in:`,
-      waitEndTime - waitStartTime,
-      "ms"
-    );
-
     const endTime = Date.now();
-    console.log(`⏱️  [${chainName}] [${modeLabel}] Total confirmation time:`, endTime - startTime, "ms");
 
     return {
       startTime,
@@ -93,20 +63,17 @@ export async function runConnectedWalletTransaction(
       txHash: hash,
       status: "success",
       rpcCalls,
-      syncMode: false, // Connected wallet mode doesn't support sync
     };
   } catch (error) {
     const endTime = Date.now();
-    console.error(`⏱️  [${chainName}] [${modeLabel}] Transaction failed:`, error);
     return {
-      startTime: endTime, // If we never started, use end time
+      startTime: endTime,
       endTime,
       duration: 0,
       txHash: "",
       status: "error",
       error: error instanceof Error ? error.message : "Unknown error",
       rpcCalls,
-      syncMode: false,
     };
   }
 }

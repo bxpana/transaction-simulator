@@ -8,5 +8,4 @@ export interface PartialResult {
   startTime: number;
   rpcCalls: RPCCallLog[];
   isComplete: boolean;
-  syncMode: boolean;
 }

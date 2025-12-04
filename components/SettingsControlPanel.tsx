@@ -115,18 +115,18 @@ export function SettingsControlPanel({
             method: "wallet_addEthereumChain",
             params: [chainMetadata],
           });
-        } catch (addError: any) {
-          if (addError.code === 4001) {
+        } catch (addError: unknown) {
+          const error = addError as { code?: number };
+          if (error.code === 4001) {
             throw new Error("User rejected adding the network");
           }
           // Chain might already exist, continue anyway
-          console.log("Chain might already exist, continuing...", addError);
         }
       }
 
       await onChainChange(chain);
-    } catch (error) {
-      console.error("Failed to switch chain:", error);
+    } catch {
+      // Chain switch may fail if user rejects
     } finally {
       setIsSwitchingChain(false);
     }
@@ -283,11 +283,11 @@ export function SettingsControlPanel({
               }}
               disabled={!needsWalletConnection && (!canSendTransaction || isLoading)}
               className={`
-                  px-4 md:px-6 py-2 rounded-lg font-semibold text-base transition-all
+                  px-4 md:px-6 py-2 rounded-lg font-semibold text-base transition-all duration-200
                   flex items-center justify-center gap-2
                   ${
                     (canSendTransaction || needsWalletConnection) && !isLoading
-                      ? "bg-white text-zinc-900 hover:bg-zinc-200 shadow-lg shadow-white/5"
+                      ? "bg-white text-zinc-900 shadow-lg shadow-white/5 cursor-pointer hover:bg-zinc-200 hover:text-zinc-700 hover:shadow-xl hover:shadow-white/10"
                       : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
                   }
                 `}

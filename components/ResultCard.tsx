@@ -11,10 +11,7 @@ import { getChainUI } from "@/config/chains";
 interface ResultCardProps {
   result: BenchmarkResult | null;
   isRunning: boolean;
-  isPreparing?: boolean;
   isWaitingForWallet?: boolean;
-  isConnectedWallet?: boolean;
-  syncMode: boolean;
   partialResult?: PartialResult | null;
   elapsedTime?: number;
   chain: Chain;
@@ -35,49 +32,40 @@ function RPCCallRow({
   accentColor: string;
 }) {
   const animatedDuration = useAnimatedCounter(call.duration, APP_CONFIG.COUNTER_ANIMATION_DURATION);
-  const isSyncMethod = call.method === "eth_sendRawTransactionSync";
   const isPending = call.isPending === true;
 
   return (
     <div
-      className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-all duration-300 min-h-[24px] border ${
-        showMockData
+      className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-all duration-300 min-h-[24px] border ${showMockData
           ? "bg-zinc-800/30 border-transparent"
           : isPending
             ? "bg-yellow-500/10 border-yellow-500/30"
-            : isSyncMethod
-              ? "bg-emerald-500/10 border-emerald-500/20"
-              : isLiveRunning
-                ? "bg-emerald-500/10 border-emerald-500/30"
-                : "bg-zinc-800/50 border-transparent"
-      }`}
+            : isLiveRunning
+              ? "bg-emerald-500/10 border-emerald-500/30"
+              : "bg-zinc-800/50 border-transparent"
+        }`}
       style={
         isLiveRunning && !isPending && !showMockData
           ? {
-              backgroundColor: `${accentColor}15`,
-              borderColor: `${accentColor}30`,
-            }
+            backgroundColor: `${accentColor}15`,
+            borderColor: `${accentColor}30`,
+          }
           : undefined
       }
     >
       <span
-        className={`font-mono transition-colors duration-300 ${showMockData ? "text-zinc-400" : isPending ? "text-yellow-300" : isLiveRunning ? "text-zinc-300" : "text-zinc-300"}`}
+        className={`font-mono transition-colors duration-300 ${showMockData ? "text-zinc-400" : isPending ? "text-yellow-300" : "text-zinc-300"}`}
       >
         {call.method}
       </span>
       <span
-        className={`font-mono transition-colors duration-300 text-right min-w-[50px] inline-block ${
-          showMockData
+        className={`font-mono transition-colors duration-300 text-right min-w-[50px] inline-block ${showMockData
             ? "text-zinc-500"
             : isPending
               ? "text-yellow-400 animate-pulse"
-              : isSyncMethod
-                ? "text-emerald-300 font-semibold"
-                : isLiveRunning
-                  ? "text-emerald-400"
-                  : "text-emerald-400"
-        }`}
-        style={isLiveRunning && !isPending && !showMockData && !isSyncMethod ? { color: accentColor } : undefined}
+              : "text-emerald-400"
+          }`}
+        style={isLiveRunning && !isPending && !showMockData ? { color: accentColor } : undefined}
       >
         {showMockData ? "--" : isPending ? "..." : `${animatedDuration}ms`}
       </span>
@@ -88,10 +76,7 @@ function RPCCallRow({
 export function ResultCard({
   result,
   isRunning,
-  isPreparing = false,
   isWaitingForWallet = false,
-  isConnectedWallet = false,
-  syncMode,
   partialResult,
   elapsedTime = 0,
   chain,
@@ -100,17 +85,12 @@ export function ResultCard({
   const blockExplorerUrl = chain.blockExplorers?.default?.url || "";
 
   const title = "Transaction Result";
-  const subtitle = syncMode
-    ? "Using eth_sendRawTransactionSync"
-    : isConnectedWallet
-      ? "Measuring time from wallet send to confirmation"
-      : "Using sendTransaction + waitForTransactionReceipt";
+  const subtitle = "Measuring time from wallet send to confirmation";
 
   // Determine what to display
   const isLiveRunning = isRunning && partialResult;
-  const displayCalls = result?.rpcCalls || partialResult?.rpcCalls || getMockCalls(syncMode);
-  const totalDuration = displayCalls.reduce((sum, call) => sum + call.duration, 0);
-  const showMockData = !result && !isRunning && !partialResult && !isPreparing;
+  const displayCalls = result?.rpcCalls || partialResult?.rpcCalls || getMockCalls();
+  const showMockData = !result && !isRunning && !partialResult;
   const displayElapsedTime = isLiveRunning ? elapsedTime : result?.duration;
 
   // Use animated counter for the total duration and RPC time
@@ -118,26 +98,18 @@ export function ResultCard({
 
   return (
     <div
-      className={`w-full flex flex-col min-h-[500px] p-6 bg-zinc-900/50 border border-zinc-800 rounded-lg transition-all duration-500 ${
-        showMockData ? "animate-fade-in" : ""
-      }`}
+      className={`w-full flex flex-col min-h-[500px] p-6 bg-zinc-900/50 border border-zinc-800 rounded-lg transition-all duration-500 ${showMockData ? "animate-fade-in" : ""
+        }`}
     >
       <div className="flex items-start justify-between mb-4">
         <div>
           <h3 className="text-xl font-semibold text-white mb-2">{title}</h3>
           <p className="text-sm text-zinc-400 font-mono">{subtitle}</p>
         </div>
-        {isPreparing && (
-          <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-500/20 text-blue-400 flex items-center gap-1">
-            <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
-            Preparing...
-          </span>
-        )}
         {result && (
           <span
-            className={`px-2 py-1 rounded text-xs font-semibold ${
-              result.status === "success" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
-            }`}
+            className={`px-2 py-1 rounded text-xs font-semibold ${result.status === "success" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
+              }`}
           >
             {result.status === "success" ? "✓ Success" : "✗ Error"}
           </span>
@@ -155,27 +127,6 @@ export function ResultCard({
           </span>
         )}
       </div>
-
-      {/* Show preparing state */}
-      {isPreparing && (
-        <>
-          <div className="mb-3">
-            <p className="text-sm text-zinc-400 mb-1">Total Duration</p>
-            <p className="text-2xl font-bold font-mono text-blue-400">
-              <span className="animate-pulse">--</span>
-            </p>
-          </div>
-
-          <div className="flex-1 flex flex-col mb-3">
-            <p className="text-sm text-zinc-400 mb-2">RPC Call Breakdown</p>
-            <div className="flex items-center justify-center py-8">
-              <p className="text-sm text-blue-400 font-medium animate-pulse">
-                Setting up wallet and fetching parameters...
-              </p>
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Show waiting for wallet confirmation state */}
       {isWaitingForWallet && (
@@ -199,7 +150,7 @@ export function ResultCard({
       )}
 
       {/* Show mock data, real results, or live running data */}
-      {!isPreparing && !isWaitingForWallet && (result || showMockData || isLiveRunning) && (
+      {!isWaitingForWallet && (result || showMockData || isLiveRunning) && (
         <>
           {showMockData || result?.status === "success" || isLiveRunning ? (
             <>
