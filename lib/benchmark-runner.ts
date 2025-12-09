@@ -1,60 +1,149 @@
-import { Chain, WalletClient } from "viem";
+import { zeroAddress } from "viem";
+import { abstractTestnet } from "viem/chains";
+import { paymasterConfig } from "@/config/paymaster-config";
 import { BenchmarkResult } from "@/types/benchmark";
 import { RPCCallLog } from "@/lib/instrumented-transport";
-import { BenchmarkPublicClient } from "./benchmark-clients";
+import { TransactionClientsWithAccount, TransactionParams } from "@/types/client-types";
 
 /**
- * Connected wallet transaction context
+ * Configuration for transaction parameters
  */
-export interface ConnectedWalletContext {
-  walletClient: WalletClient;
-  publicClient: BenchmarkPublicClient;
-  address: `0x${string}`;
+export interface TransactionOptions {
+  /** Whether to pre-fetch the nonce */
+  nonce: boolean;
+  /** Whether to pre-fetch gas parameters (maxFeePerGas, maxPriorityFeePerGas, gas) */
+  gasParams: boolean;
+  /** Whether to pre-fetch the chain ID */
+  chainId: boolean;
+  /** Whether to use sync mode (eth_sendRawTransactionSync) */
+  syncMode: boolean;
 }
 
 /**
- * Callback to notify when user has confirmed the transaction in their wallet
+ * Pre-fetched gas parameters for transactions
  */
-export type OnTransactionSubmitted = (startTime: number) => void;
+export interface PrefetchedGas {
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  gas: bigint;
+}
 
 /**
- * Runs a transaction with a connected wallet (user signs via wallet popup)
- *
- * Note: Most wallets (MetaMask, etc.) don't support eth_signTransaction separately.
- * They only support eth_sendTransaction which signs AND sends atomically.
- *
- * This means we can't capture eth_sendRawTransaction timing - the wallet handles
- * the send internally. We CAN capture:
- * - eth_getTransactionReceipt (polling for confirmation)
- *
- * The timer starts AFTER the wallet returns the tx hash (user confirmed + sent).
+ * Runs a transaction with the given options
+ * 
+ * @param clients - Wallet and public clients with account
+ * @param nonce - Starting nonce for the transaction
+ * @param rpcCalls - Array to collect RPC call logs
+ * @param options - Configuration for transaction parameters
+ * @param prefetchedGas - Pre-fetched gas parameters if available
+ * @returns Benchmark result with timing and RPC call data
  */
-export async function runConnectedWalletTransaction(
-  context: ConnectedWalletContext,
-  chain: Chain,
+export async function runTransaction(
+  clients: TransactionClientsWithAccount,
+  nonce: number,
   rpcCalls: RPCCallLog[],
-  onTransactionSubmitted?: OnTransactionSubmitted
+  options: TransactionOptions,
+  prefetchedGas: PrefetchedGas | null = null
 ): Promise<BenchmarkResult> {
+  const startTime = Date.now();
+  const modeLabel = options.syncMode ? "SYNC" : "ASYNC";
+  console.log(`⏱️  [${modeLabel}] Transaction started at:`, startTime);
+  // Capture block height at send time to see if inclusion slips miniblocks
+  const sendBlockNumber = await clients.publicClient.getBlockNumber();
+  
   try {
-    // Build transaction params - self-transfer to avoid wallet warnings
-    const txParams = {
-      to: context.address,
+    const paramsStartTime = Date.now();
+    const txParams: TransactionParams = {
+      to: zeroAddress,
       value: BigInt(0),
-      account: context.address,
-      chain,
+      ...paymasterConfig,
     };
 
-    // Send transaction via connected wallet
-    // Timer starts AFTER this returns (user confirmed + sent to mempool)
-    const hash = await context.walletClient.sendTransaction(txParams);
-    const startTime = Date.now();
+    // Add pre-fetched nonce if enabled
+    if (options.nonce) {
+      txParams.nonce = nonce;
+    }
 
-    // Notify that transaction was submitted (for UI to start timer)
-    onTransactionSubmitted?.(startTime);
+    // Add pre-fetched gas parameters if enabled
+    if (options.gasParams && prefetchedGas) {
+      txParams.maxFeePerGas = prefetchedGas.maxFeePerGas;
+      txParams.maxPriorityFeePerGas = prefetchedGas.maxPriorityFeePerGas;
+      txParams.gas = prefetchedGas.gas;
+    }
+    const paramsEndTime = Date.now();
+    console.log(`⏱️  [${modeLabel}] Params prepared in:`, paramsEndTime - paramsStartTime, "ms");
 
-    // Wait for confirmation via instrumented client (captures RPC timing)
-    await context.publicClient.waitForTransactionReceipt({ hash });
+    let hash: string;
+    let receiptBlockNumber: bigint | undefined;
+    let inclusionLatencyMs: number | undefined;
+
+    if (options.syncMode) {
+      // SYNC MODE: Use eth_sendRawTransactionSync
+      const prepareStartTime = Date.now();
+      const request = await clients.walletClient.prepareTransactionRequest(txParams);
+      const prepareEndTime = Date.now();
+      console.log(`⏱️  [${modeLabel}] prepareTransactionRequest completed in:`, prepareEndTime - prepareStartTime, "ms");
+
+      const signStartTime = Date.now();
+      const serializedTransaction = await clients.walletClient.signTransaction(request);
+      const signEndTime = Date.now();
+      console.log(`⏱️  [${modeLabel}] Transaction signed in:`, signEndTime - signStartTime, "ms");
+      
+      const sendStartTime = Date.now();
+      const receipt = await clients.publicClient.sendRawTransactionSync({
+        serializedTransaction,
+      });
+      const sendEndTime = Date.now();
+      console.log(`⏱️  [${modeLabel}] sendRawTransactionSync completed in:`, sendEndTime - sendStartTime, "ms");
+      console.log(`⏱️  [${modeLabel}] Transaction hash:`, receipt.transactionHash);
+
+      hash = receipt.transactionHash;
+      receiptBlockNumber = receipt.blockNumber;
+      inclusionLatencyMs = sendEndTime - sendStartTime;
+    } else {
+      // ASYNC MODE: Use sendTransaction + waitForTransactionReceipt
+      // When all params are prefetched, skip prepareTransactionRequest to avoid re-estimation
+      if (options.nonce && options.gasParams && options.chainId && prefetchedGas) {
+        const requestStartTime = Date.now();
+        // Add account and chain directly since we're skipping prepare
+        const requestToSign = {
+          ...txParams,
+          from: clients.account.address,
+          chainId: abstractTestnet.id,
+        };
+        const requestEndTime = Date.now();
+        console.log(`⏱️  [${modeLabel}] Request prepared in:`, requestEndTime - requestStartTime, "ms");
+        
+        const signStartTime = Date.now();
+        const serializedTransaction = await clients.walletClient.signTransaction(requestToSign);
+        const signEndTime = Date.now();
+        console.log(`⏱️  [${modeLabel}] Transaction signed in:`, signEndTime - signStartTime, "ms");
+        
+        const sendStartTime = Date.now();
+        hash = await clients.publicClient.sendRawTransaction({ serializedTransaction });
+        const sendEndTime = Date.now();
+        console.log(`⏱️  [${modeLabel}] sendRawTransaction completed in:`, sendEndTime - sendStartTime, "ms");
+        console.log(`⏱️  [${modeLabel}] Transaction hash:`, hash);
+      } else {
+        // Use normal flow when some params aren't prefetched
+        const sendTxStartTime = Date.now();
+        hash = await clients.walletClient.sendTransaction(txParams);
+        const sendTxEndTime = Date.now();
+        console.log(`⏱️  [${modeLabel}] sendTransaction completed in:`, sendTxEndTime - sendTxStartTime, "ms");
+        console.log(`⏱️  [${modeLabel}] Transaction hash:`, hash);
+      }
+
+      const waitStartTime = Date.now();
+      const receipt = await clients.publicClient.waitForTransactionReceipt({ hash });
+      const waitEndTime = Date.now();
+      console.log(`⏱️  [${modeLabel}] waitForTransactionReceipt completed in:`, waitEndTime - waitStartTime, "ms");
+
+      receiptBlockNumber = receipt.blockNumber;
+      inclusionLatencyMs = waitEndTime - waitStartTime;
+    }
+
     const endTime = Date.now();
+    console.log(`⏱️  [${modeLabel}] Total transaction time:`, endTime - startTime, "ms");
 
     return {
       startTime,
@@ -63,17 +152,25 @@ export async function runConnectedWalletTransaction(
       txHash: hash,
       status: "success",
       rpcCalls,
+      syncMode: options.syncMode,
+      inclusion: {
+        sendBlockNumber,
+        receiptBlockNumber,
+        blockDelta: receiptBlockNumber ? Number(receiptBlockNumber - sendBlockNumber) : undefined,
+        inclusionLatencyMs,
+      },
     };
   } catch (error) {
     const endTime = Date.now();
     return {
-      startTime: endTime,
+      startTime,
       endTime,
-      duration: 0,
+      duration: endTime - startTime,
       txHash: "",
       status: "error",
       error: error instanceof Error ? error.message : "Unknown error",
       rpcCalls,
+      syncMode: options.syncMode,
     };
   }
 }

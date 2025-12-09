@@ -1,91 +1,63 @@
-# Transaction Latency Simulator
+# Transaction Simulator
 
-A real-time transaction latency benchmarking tool for EVM chains. Test how long it takes for a transaction to be confirmed on any chain — including Abstract, MegaETH, Monad, and 500+ others.
+A small Next.js app plus a CLI batch runner to measure `eth_sendRawTransactionSync` latency (and compare against async send + wait). It uses the Abstract testnet RPC and the paymaster configured in `config/paymaster-config.ts`.
 
-**100% open-source and unbiased.**
+## Prerequisites
+- `pnpm` (recommended)
+- RPC endpoint: defaults to `abstractTestnet` from `viem/chains`. Adjust in `lib/benchmark-clients.ts` if needed.
+- Paymaster: set in `config/paymaster-config.ts` (currently `0x5407B5040dec3D339A9247f3654E59EEccbb6391` with general paymaster input).
 
-→ [txsim.com](https://txsim.com)
-
-## Features
-
-- **Real Transaction Testing**: Send actual transactions (0-value self-transfers) to measure true confirmation latency
-- **Multi-Chain Support**: Test on 500+ EVM chains including Abstract, MegaETH, Monad, Base, and Ethereum testnets
-- **RPC Call Breakdown**: See detailed timing for each RPC call (eth_sendTransaction, eth_getTransactionReceipt, etc.)
-- **Live Updates**: Watch transaction confirmation progress in real-time
-- **Wallet Integration**: Connect any wallet via RainbowKit (MetaMask, WalletConnect, Coinbase Wallet, etc.)
-
-## How It Works
-
-1. Connect your wallet
-2. Select a chain from the featured list or search 500+ chains
-3. Click "Send Transaction" and confirm in your wallet
-4. Watch the timer measure actual confirmation latency
-
-The tool sends a 0-value transaction to your own address and measures the time from when the transaction is submitted to the network until it's confirmed on-chain.
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- pnpm (recommended) or npm
-
-### Installation
-
+Install deps:
 ```bash
-# Clone the repository
-git clone https://github.com/jarrodwatts/transaction-simulator.git
-cd transaction-simulator
-
-# Install dependencies
 pnpm install
+```
 
-# Run the development server
+## Web demo (single tx, interactive)
+```bash
 pnpm dev
 ```
+Open http://localhost:3000 and toggle:
+- Sync mode (uses `eth_sendRawTransactionSync`)
+- Prefetch nonce/gas/chain ID (to reduce setup overhead)
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Result card shows:
+- Per-RPC call durations
+- Inclusion details: send block, receipt block, block delta, inclusion wait (ms)
 
-## Tech Stack
+## CLI batch runner (100 txs)
+Runs multiple txs and prints per-tx lines plus p50/p90/p99 summaries.
 
-- **Framework**: [Next.js 16](https://nextjs.org/) with App Router
-- **Blockchain**: [viem](https://viem.sh/) + [wagmi](https://wagmi.sh/)
-- **Wallet Connection**: [RainbowKit](https://www.rainbowkit.com/)
-- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
+```bash
+# 100 sync txs (eth_sendRawTransactionSync)
+pnpm benchmark:batch -- --count 100
 
-## Project Structure
-
-```
-├── app/                    # Next.js app router pages
-├── components/             # React components
-│   └── ui/                 # Reusable UI primitives
-├── config/                 # Chain configurations
-├── constants/              # App-wide constants
-├── hooks/                  # Custom React hooks
-├── lib/                    # Core utilities
-│   ├── benchmark-runner.ts # Transaction execution logic
-│   ├── benchmark-clients.ts # Viem client setup
-│   └── instrumented-transport.ts # RPC timing capture
-├── types/                  # TypeScript types
-└── public/                 # Static assets (chain logos)
+# 100 async txs (sendRawTransaction + waitForTransactionReceipt)
+pnpm benchmark:batch -- --count 100 --async
 ```
 
-## Adding Custom Chains
-
-To add or modify featured chains, edit `config/chains.ts`:
-
-```typescript
-export const FEATURED_CHAINS: Chain[] = [
-  abstractTestnet,
-  monadTestnet,
-  // Add your chain here
-];
+Per-tx log format:
+```
+#17/100 hash=0x... total=1280ms blockDelta=1 inclusionWait=950ms
 ```
 
-## Contributing
+Summary shows:
+- Total wall time for the batch
+- Duration p50/p90/p99 (overall end-to-end)
+- Inclusion wait p50/p90/p99 (time spent waiting for inclusion/receipt)
+- Block delta avg/max (how many miniblocks slipped)
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## How to interpret results
+- Block delta 0–1 but inclusionWait ~1s+: likely polling interval in the sync handler or miniblock cadence stretching; not heavy mempool queueing.
+- Block delta grows (>3): txs are missing multiple miniblocks; check sequencer sealing/backpressure.
+- Async vs sync: if async p99 ≪ sync p99 with similar block deltas, the sync RPC is polling too slowly. If both are high, inclusion itself is slow (sequencer/DB/backlog).
+- Compare inclusionWait to miniblock target (200ms): a 1s wait with delta=1 implies ~1s seal or ~1s polling interval.
 
-## License
+## Configuration knobs
+- RPC URL/chain: edit `lib/benchmark-clients.ts` (uses `abstractTestnet.rpcUrls.default.http[0]`).
+- Paymaster: `config/paymaster-config.ts`.
+- Batch size and mode: CLI flags `--count N`, `--async`.
+- Prefetch behavior (web UI only): toggle nonce/gas/chain ID to isolate RPC setup costs from inclusion time.
 
-MIT
+## Troubleshooting
+- If you hit rate limits (LB is 1000 rps), lower `--count` or add delays between runs.
+- For local node testing, point `rpcUrl` in `lib/benchmark-clients.ts` to `http://localhost:PORT` and rerun to separate network/LB effects.

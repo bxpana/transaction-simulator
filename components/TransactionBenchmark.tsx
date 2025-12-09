@@ -1,116 +1,137 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Chain } from "viem";
-import { useAccount, useWalletClient, useSwitchChain } from "wagmi";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { RPCCallLog } from "@/lib/instrumented-transport";
-import { createInstrumentedPublicClient } from "@/lib/benchmark-clients";
-import { runConnectedWalletTransaction, ConnectedWalletContext } from "@/lib/benchmark-runner";
+import { createBenchmarkClients } from "@/lib/benchmark-clients";
+import { runTransaction, TransactionOptions } from "@/lib/benchmark-runner";
 import { BenchmarkResult } from "@/types/benchmark";
 import { PartialResult } from "@/types/partial-result";
 import { ResultCard } from "./ResultCard";
-import { SettingsControlPanel } from "./SettingsControlPanel";
+import { ShimmerButton } from "./ui/shimmer-button";
+import { SettingsControlPanel } from "./PrefetchControlPanel";
 import { APP_CONFIG } from "@/constants/app-config";
-import { DEFAULT_CHAIN } from "@/config/chains";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 export function TransactionBenchmark() {
-  const [selectedChain, setSelectedChain] = useState<Chain>(DEFAULT_CHAIN);
   const [isRunning, setIsRunning] = useState(false);
-  const [isWaitingForWallet, setIsWaitingForWallet] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [result, setResult] = useState<BenchmarkResult | null>(null);
   const [partialResult, setPartialResult] = useState<PartialResult | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
-
+  const [options, setOptions] = useState<TransactionOptions>({
+    nonce: false,
+    gasParams: false,
+    chainId: false,
+    syncMode: false,
+  });
+  
   const timerRef = useRef<NodeJS.Timeout | undefined>(undefined);
-  const startTimeRef = useRef<number>(0);
-
-  // Wagmi hooks for wallet connection
-  const { address, isConnected } = useAccount();
-  const { data: walletClient } = useWalletClient();
-  const { switchChainAsync } = useSwitchChain();
-
-  // Clear results when switching chains, and switch wallet chain if connected
-  const handleChainChange = async (chain: Chain) => {
-    setSelectedChain(chain);
-    setResult(null);
-    setPartialResult(null);
-    setElapsedTime(0);
-
-    // If wallet is connected, switch to the new chain
-    if (isConnected) {
-      try {
-        await switchChainAsync({ chainId: chain.id });
-      } catch {
-        // User might reject the switch, that's okay
-      }
-    }
-  };
-
-  // User must be connected to run a transaction
-  const canRunTransaction = isConnected;
 
   const runBenchmark = async () => {
-    if (!canRunTransaction || !walletClient || !address) return;
-
+    setIsPreparing(true);
     setIsRunning(false);
     setResult(null);
     setElapsedTime(0);
 
+    // Generate a fresh account for the transaction
+    const account = privateKeyToAccount(generatePrivateKey());
+
     // Create RPC call log array
     const rpcCalls: RPCCallLog[] = [];
 
-    // Create instrumented public client for monitoring confirmation RPC calls
-    const publicClient = createInstrumentedPublicClient(
-      selectedChain,
+    // Pre-fetch gas parameters if enabled (before creating transaction clients)
+    let prefetchedGas = null;
+    if (options.gasParams) {
+      // Create a temporary client just for pre-fetching (doesn't log to RPC arrays)
+      const prefetchClients = createBenchmarkClients(
+        account, 
+        () => {}, // Empty logger - don't track these calls
+        undefined,
+        options.chainId
+      );
+      
+      const [block, maxPriorityFee, gasEstimate] = await Promise.all([
+        prefetchClients.publicClient.getBlock({ blockTag: 'latest' }),
+        prefetchClients.publicClient.request({ method: 'eth_maxPriorityFeePerGas' }),
+        prefetchClients.publicClient.estimateGas({
+          account: account.address,
+          to: "0x0000000000000000000000000000000000000000",
+          value: BigInt(0),
+        }),
+      ]);
+      
+      prefetchedGas = {
+        maxFeePerGas: block.baseFeePerGas ? block.baseFeePerGas + BigInt(maxPriorityFee) : BigInt(maxPriorityFee),
+        maxPriorityFeePerGas: BigInt(maxPriorityFee),
+        gas: gasEstimate,
+      };
+    }
+
+    // Create clients for the transaction
+    const clients = createBenchmarkClients(
+      account, 
       (log) => {
+        // When a call completes, find and update the pending entry or add if not found
         const pendingIndex = rpcCalls.findIndex(
-          (call) => call.method === log.method && call.isPending && call.startTime === log.startTime
+          call => call.method === log.method && call.isPending && call.startTime === log.startTime
         );
         if (pendingIndex >= 0) {
           rpcCalls[pendingIndex] = { ...log, isPending: false };
         } else {
           rpcCalls.push({ ...log, isPending: false });
         }
-        setPartialResult((prev) => (prev ? { ...prev, rpcCalls: [...rpcCalls] } : null));
+        setPartialResult(prev => prev ? { ...prev, rpcCalls: [...rpcCalls] } : null);
       },
       (log) => {
+        // When a call starts, add it as pending
         rpcCalls.push({ ...log, endTime: 0, duration: 0, isPending: true });
-        setPartialResult((prev) => (prev ? { ...prev, rpcCalls: [...rpcCalls] } : null));
-      }
+        setPartialResult(prev => prev ? { ...prev, rpcCalls: [...rpcCalls] } : null);
+      },
+      options.chainId
     );
 
-    // Show "waiting for wallet" state immediately
-    setIsWaitingForWallet(true);
+    // Get starting nonce (only if pre-fetch is disabled)
+    // When prefetch is enabled, we use nonce 0 since these are fresh accounts
+    let nonce = 0;
+    
+    if (!options.nonce) {
+      // Fetch nonce from the network using temporary client that doesn't log
+      const tempClient = createBenchmarkClients(
+        account,
+        () => {}, // Don't log these setup calls
+        undefined,
+        options.chainId
+      );
+      
+      nonce = await tempClient.publicClient.getTransactionCount({
+        address: account.address,
+      });
+    }
 
-    // Create context for connected wallet transaction
-    const context: ConnectedWalletContext = {
-      walletClient,
-      publicClient,
-      address,
-    };
+    // NOW start the timer and partial result - right before transaction begins
+    const startTime = Date.now();
 
-    // Run the transaction - timer starts AFTER user confirms in wallet
-    const txResult = await runConnectedWalletTransaction(
-      context,
-      selectedChain,
+    setIsPreparing(false);
+    setIsRunning(true);
+
+    setPartialResult({
+      startTime,
+      rpcCalls: [],
+      isComplete: false,
+      syncMode: options.syncMode,
+    });
+
+    timerRef.current = setInterval(() => {
+      setElapsedTime(Date.now() - startTime);
+    }, APP_CONFIG.TIMER_UPDATE_INTERVAL);
+
+    // Run the transaction
+    const txResult = await runTransaction(
+      { ...clients, account },
+      nonce,
       rpcCalls,
-      // Callback when user confirms in wallet - NOW start the timer
-      (startTime: number) => {
-        startTimeRef.current = startTime;
-        setIsWaitingForWallet(false);
-        setIsRunning(true);
-
-        setPartialResult({
-          startTime,
-          rpcCalls: [],
-          isComplete: false,
-        });
-
-        timerRef.current = setInterval(() => {
-          setElapsedTime(Date.now() - startTimeRef.current);
-        }, APP_CONFIG.TIMER_UPDATE_INTERVAL);
-      }
+      options,
+      prefetchedGas
     );
 
     // Stop timer and set final result
@@ -119,47 +140,38 @@ export function TransactionBenchmark() {
     setPartialResult(null);
     setResult(txResult);
     setIsRunning(false);
-    setIsWaitingForWallet(false);
   };
-
-  // Determine button text
-  const buttonText = isWaitingForWallet
-    ? "Confirm in Wallet..."
-    : isRunning
-      ? "Sending Transaction..."
-      : !canRunTransaction
-        ? "Connect Wallet to Continue"
-        : "Send Transaction";
 
   return (
     <div className="w-full max-w-3xl mx-auto px-4 py-8">
-      <div className="flex flex-col items-center gap-6">
-        <ConnectButton.Custom>
-          {({ openConnectModal, openAccountModal }) => (
-            <SettingsControlPanel
-              disabled={isRunning}
-              selectedChain={selectedChain}
-              onChainChange={handleChainChange}
-              isWalletConnected={isConnected}
-              walletAddress={address}
-              onConnectWallet={openConnectModal}
-              onManageWallet={openAccountModal}
-              onSendTransaction={runBenchmark}
-              canSendTransaction={canRunTransaction}
-              buttonText={buttonText}
-              isLoading={isRunning || isWaitingForWallet}
-            />
-          )}
-        </ConnectButton.Custom>
-
-        <ResultCard
-          result={result}
+      <div className="flex flex-col items-center gap-8">
+        <SettingsControlPanel
+          options={options}
+          onChange={setOptions}
+          disabled={isRunning}
+        />
+        
+        <ResultCard 
+          result={result} 
           isRunning={isRunning}
-          isWaitingForWallet={isWaitingForWallet}
+          isPreparing={isPreparing}
+          syncMode={options.syncMode}
           partialResult={partialResult}
           elapsedTime={elapsedTime}
-          chain={selectedChain}
         />
+
+        <ShimmerButton
+          onClick={runBenchmark}
+          disabled={isRunning || isPreparing}
+          shimmerColor="#10b981"
+          shimmerSize="0.1em"
+          shimmerDuration="2s"
+          borderRadius="0.75rem"
+          background="linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)"
+          className="w-full px-8 py-3 text-base font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_40px_rgba(16,185,129,0.3)] hover:shadow-[0_0_60px_rgba(16,185,129,0.5)] transition-shadow"
+        >
+          {isPreparing ? "Preparing..." : isRunning ? "Sending Transaction..." : "Send Transaction"}
+        </ShimmerButton>
       </div>
     </div>
   );

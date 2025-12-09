@@ -8,4 +8,14 @@ export interface BenchmarkResult {
   status: "success" | "error";
   error?: string;
   rpcCalls: RPCCallLog[];
+  syncMode: boolean;
+  /**
+   * Block inclusion details to understand if latency comes from miniblock slips or receipt fetch.
+   */
+  inclusion?: {
+    sendBlockNumber: bigint;
+    receiptBlockNumber?: bigint;
+    blockDelta?: number;
+    inclusionLatencyMs?: number;
+  };
 }
